@@ -10,21 +10,40 @@ const int INITIAL_SQUARES = 100;
 const int SQUARE_INCREMENT = 50;
 const float INPUT_INTERVAL = 0.25f; // 0.5 seconds
 const float MOUSE_GRAVITY_STRENGTH = 0.0f; // Weak orbital pull strength
-const float SQUARE_GRAVITY_STRENGTH = 500000.0f; // Square-to-square orbital pull strength
+const float SQUARE_GRAVITY_STRENGTH = 100000.0f; // Square-to-square orbital pull strength
+const float BLACK_HOLE_GRAVITY = 5000000.0f; // Black hole gravitational pull
+const float BLACK_HOLE_RADIUS = 32.0f; // 16 pixel diameter = 8 radius
+const float BLACK_HOLE_INTERVAL = 10.0f; // 30 seconds between black holes
+const float BLACK_HOLE_DURATION = 15.0f; // 15 seconds duration
+const float BACKGROUND_FADE_SPEED = 15.0f; // How fast background fades to black
+
+// Black hole structure
+struct BlackHole {
+    float x, y;        // Position
+    bool active;       // Is the black hole currently active
+    float timer;       // Time remaining for current black hole
+    float nextSpawn;   // Time until next black hole spawns
+};
 
 // Square structure
 struct Square {
     float x, y;        // Position
     float vx, vy;      // Velocity
     Color color;       // Color
+    bool destroyed;    // Is this square destroyed (waiting for respawn)
 };
 
 // Function declarations
 void GenerateSquare(Square& square, int screenWidth, int screenHeight);
 void UpdateSquare(Square& square, int screenWidth, int screenHeight);
 void ApplySquareGravity(std::vector<Square>& squares);
+void ApplyBlackHoleGravity(std::vector<Square>& squares, BlackHole& blackHole);
 void CheckSquareCollisions(std::vector<Square>& squares);
+void CheckBlackHoleCollisions(std::vector<Square>& squares, BlackHole& blackHole);
+void UpdateBlackHole(BlackHole& blackHole, int screenWidth, int screenHeight);
+void RespawnDestroyedSquares(std::vector<Square>& squares, int screenWidth, int screenHeight);
 void DrawSquare(const Square& square);
+void DrawBlackHole(const BlackHole& blackHole);
 void AddSquares(std::vector<Square>& squares, int count, int screenWidth, int screenHeight);
 void RemoveSquares(std::vector<Square>& squares, int count);
 
@@ -46,6 +65,9 @@ int main() {
     // Create initial squares
     std::vector<Square> squares;
     AddSquares(squares, INITIAL_SQUARES, screenWidth, screenHeight);
+
+    // Initialize black hole
+    BlackHole blackHole = {0, 0, false, 0.0f, BLACK_HOLE_INTERVAL};
 
     // Input timing variables
     float lastInputTime = 0.0f;
@@ -82,6 +104,9 @@ int main() {
             UpdateSquare(square, screenWidth, screenHeight);
         }
 
+        // Update black hole
+        UpdateBlackHole(blackHole, screenWidth, screenHeight);
+
         // Apply mouse orbital pull
         Vector2 mousePos = GetMousePosition();
         for (auto& square : squares) {
@@ -105,19 +130,41 @@ int main() {
             }
         }
 
+        // Apply black hole gravity
+        if (blackHole.active) {
+            ApplyBlackHoleGravity(squares, blackHole);
+        }
+
         // Apply square-to-square orbital pull
         ApplySquareGravity(squares);
 
         // Check collisions between squares
         CheckSquareCollisions(squares);
 
+        // Check collisions with black hole
+        if (blackHole.active) {
+            CheckBlackHoleCollisions(squares, blackHole);
+        }
+
+        // Respawn destroyed squares when black hole disappears
+        if (!blackHole.active && blackHole.timer <= 0.0f) {
+            RespawnDestroyedSquares(squares, screenWidth, screenHeight);
+        }
+
         // Draw
         BeginDrawing();
             ClearBackground(RAYWHITE);
 
-            // Draw all squares
+            // Draw all active squares
             for (const auto& square : squares) {
-                DrawSquare(square);
+                if (!square.destroyed) {
+                    DrawSquare(square);
+                }
+            }
+
+            // Draw black hole if active
+            if (blackHole.active) {
+                DrawBlackHole(blackHole);
             }
 
             // Draw FPS counter
@@ -148,6 +195,7 @@ void GenerateSquare(Square& square, int screenWidth, int screenHeight) {
         (unsigned char)(rand() % 256),
         255
     };
+    square.destroyed = false;
 }
 
 void UpdateSquare(Square& square, int screenWidth, int screenHeight) {
@@ -183,6 +231,13 @@ void CheckSquareCollisions(std::vector<Square>& squares) {
                 s1.vy = s2.vy;
                 s2.vx = tempVx;
                 s2.vy = tempVy;
+
+                // 10% chance to exchange colors
+                if (rand() % 100 < 10) {
+                    Color tempColor = s1.color;
+                    s1.color = s2.color;
+                    s2.color = tempColor;
+                }
 
                 // Separate overlapping squares
                 float overlapX = (s1.x + SQUARE_SIZE/2) - (s2.x + SQUARE_SIZE/2);
@@ -237,8 +292,127 @@ void ApplySquareGravity(std::vector<Square>& squares) {
     }
 }
 
+void UpdateBlackHole(BlackHole& blackHole, int screenWidth, int screenHeight) {
+    blackHole.nextSpawn -= GetFrameTime();
+
+    if (blackHole.active) {
+        // Move black hole slowly towards center
+        float centerX = screenWidth / 2.0f;
+        float centerY = screenHeight / 2.0f;
+
+        float dx = centerX - blackHole.x;
+        float dy = centerY - blackHole.y;
+        float distance = sqrt(dx*dx + dy*dy);
+
+        if (distance > 1.0f) {
+            // Move towards center at a slow speed
+            float moveSpeed = 50.0f; // pixels per second
+            float moveX = (dx / distance) * moveSpeed * GetFrameTime();
+            float moveY = (dy / distance) * moveSpeed * GetFrameTime();
+
+            blackHole.x += moveX;
+            blackHole.y += moveY;
+        }
+
+        blackHole.timer -= GetFrameTime();
+        if (blackHole.timer <= 0.0f) {
+            blackHole.active = false;
+            blackHole.nextSpawn = BLACK_HOLE_INTERVAL;
+        }
+    } else if (blackHole.nextSpawn <= 0.0f) {
+        // Spawn new black hole at random position
+        blackHole.x = rand() % (screenWidth - 32) + 16; // Keep away from edges
+        blackHole.y = rand() % (screenHeight - 32) + 16;
+        blackHole.active = true;
+        blackHole.timer = BLACK_HOLE_DURATION;
+    }
+}
+
+void ApplyBlackHoleGravity(std::vector<Square>& squares, BlackHole& blackHole) {
+    for (auto& square : squares) {
+        if (square.destroyed) continue;
+
+        // Calculate distance and direction to black hole
+        float dx = blackHole.x - (square.x + SQUARE_SIZE/2);
+        float dy = blackHole.y - (square.y + SQUARE_SIZE/2);
+        float distance = sqrt(dx*dx + dy*dy);
+
+        // Avoid division by zero
+        if (distance > 1.0f) {
+            // Calculate gravitational force (inverse square law)
+            float force = BLACK_HOLE_GRAVITY / (distance * distance);
+
+            // Normalize direction and apply force
+            float dirX = dx / distance;
+            float dirY = dy / distance;
+
+            // Apply force to velocity
+            square.vx += dirX * force * GetFrameTime();
+            square.vy += dirY * force * GetFrameTime();
+        }
+    }
+}
+
+void CheckBlackHoleCollisions(std::vector<Square>& squares, BlackHole& blackHole) {
+    for (auto& square : squares) {
+        if (square.destroyed) continue;
+
+        // Calculate distance between square center and black hole center
+        float dx = blackHole.x - (square.x + SQUARE_SIZE/2);
+        float dy = blackHole.y - (square.y + SQUARE_SIZE/2);
+        float distance = sqrt(dx*dx + dy*dy);
+
+        // If square touches black hole (distance <= radius + half square size)
+        if (distance <= BLACK_HOLE_RADIUS + SQUARE_SIZE/2) {
+            square.destroyed = true;
+        }
+    }
+}
+
+void RespawnDestroyedSquares(std::vector<Square>& squares, int screenWidth, int screenHeight) {
+    for (auto& square : squares) {
+        if (square.destroyed) {
+            // Respawn from random edge
+            int edge = rand() % 4; // 0=top, 1=right, 2=bottom, 3=left
+
+            switch (edge) {
+                case 0: // Top edge
+                    square.x = rand() % screenWidth;
+                    square.y = -SQUARE_SIZE;
+                    square.vx = (rand() % 200 - 100) / 10.0f;
+                    square.vy = abs((rand() % 100) / 10.0f) + 5.0f; // Always shoot downward
+                    break;
+                case 1: // Right edge
+                    square.x = screenWidth;
+                    square.y = rand() % screenHeight;
+                    square.vx = -abs((rand() % 100) / 10.0f) - 5.0f; // Always shoot leftward
+                    square.vy = (rand() % 200 - 100) / 10.0f;
+                    break;
+                case 2: // Bottom edge
+                    square.x = rand() % screenWidth;
+                    square.y = screenHeight;
+                    square.vx = (rand() % 200 - 100) / 10.0f;
+                    square.vy = -abs((rand() % 100) / 10.0f) - 5.0f; // Always shoot upward
+                    break;
+                case 3: // Left edge
+                    square.x = -SQUARE_SIZE;
+                    square.y = rand() % screenHeight;
+                    square.vx = abs((rand() % 100) / 10.0f) + 5.0f; // Always shoot rightward
+                    square.vy = (rand() % 200 - 100) / 10.0f;
+                    break;
+            }
+
+            square.destroyed = false;
+        }
+    }
+}
+
 void DrawSquare(const Square& square) {
     DrawRectangle(square.x, square.y, SQUARE_SIZE, SQUARE_SIZE, square.color);
+}
+
+void DrawBlackHole(const BlackHole& blackHole) {
+    DrawCircle(blackHole.x, blackHole.y, BLACK_HOLE_RADIUS, BLACK);
 }
 
 void AddSquares(std::vector<Square>& squares, int count, int screenWidth, int screenHeight) {
