@@ -6,7 +6,7 @@ LDFLAGS = -lraylib -lGL -lm -lpthread -ldl -lrt -lX11
 # Directories
 SRC_DIR = src
 BUILD_DIR = build
-TARGET = $(BUILD_DIR)/raylib_hello_world
+TARGET = $(BUILD_DIR)/raylib_stress_test
 
 # Source files
 SRCS = $(SRC_DIR)/main.cpp
